@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
 
-# chandra.py
-#
-# CDK v1.00: 2019-05-25. Base Chandra download, running ciao scripts.
-#
-# DESCRIPTION:
-# A set of scripts for downloading and analyzing Chandra/ACIS image files for
-# detecting or placing upper limits on the presence of emission at a set of
-# input coordinates.
+"""
+By C. D. Kilpatrick 2019-05-25
 
-# REQUIREMENTS:
-# In addition to the requirements in requirements.txt, this script requires the
-# latest version (4.11) of ciao (to use ciao/make_instmap_weights and merge_obs,
-# specifically).
+v1.00: 2019-05-25. Base Chandra download, running ciao scripts
+
+chandra.py: A set of scripts for downloading and analyzing Chandra/ACIS image
+files for detecting or placing upper limits on the presence of emission at a
+set of input coordinates.
+"""
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -29,8 +25,13 @@ import numpy as np
 from photutils import SkyCircularAperture,SkyCircularAnnulus,aperture_photometry
 from datetime import datetime
 
+if 'CIAO_DIR' in os.environ.keys():
+    ciao = os.environ['CIAO_DIR']
+else:
+    ciao = ''
+
 global_defaults = {
-    'ciao': '/Users/ckilpatrick/scripts/ciao',
+    'ciao': ciao,
     'uri': 'https://cxcfps.cfa.harvard.edu/cgi-bin/'+\
         'cda/footprint/get_vo_table.pl',
     'ftp': 'cda.cfa.harvard.edu',
@@ -289,6 +290,18 @@ class chandra():
                     (success, ufile) = self.download_image(url, filename,
                         outdir=self.rawdir, clobber=False)
                     if success:
+                        # Validate that the evt2 file has SUM_2X2, ORC_MODE
+                        # OCLKPAIR, FEP_CCD variables.
+                        hdu = fits.open(ufile, mode='update')
+                        if 'SUM_2X2' not in hdu['EVENTS'].header.keys():
+                            hdu['EVENTS'].header['SUM_2X2'] = 0
+                        if 'ORC_MODE' not in hdu['EVENTS'].header.keys():
+                            hdu['EVENTS'].header['ORC_MODE'] = 0
+                        if 'OCLKPAIR' not in hdu['EVENTS'].header.keys():
+                            hdu['EVENTS'].header['OCLKPAIR'] = 8
+                        if 'FEP_CCD' not in hdu['EVENTS'].header.keys():
+                            hdu['EVENTS'].header['FEP_CCD'] = 275638
+                        hdu.close()
                         self.evt2files.append(ufile)
                 if 'asol1' in file:
                     url = 'ftp://' + ftp_url + '/' + file
@@ -584,8 +597,3 @@ if __name__ == '__main__':
     print(chandra.final_phot)
     chandra.final_phot.write(chandra.outtable,format='ascii.fixed_width',
         overwrite=True)
-
-
-
-
-
