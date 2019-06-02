@@ -4,6 +4,7 @@
 By C. D. Kilpatrick 2019-05-25
 
 v1.00: 2019-05-25. Base Chandra download, running ciao scripts
+v1.01: 2019-06-02. Fixed issues with CC images, missing ASOL, off axis images
 
 chandra.py: A set of scripts for downloading and analyzing Chandra/ACIS image
 files for detecting or placing upper limits on the presence of emission at a
@@ -41,7 +42,9 @@ global_defaults = {
     'bin': 1
 }
 sss = {
-    'temperature': 0.02 + 0.005 * np.arange(36),
+    # blackbody with T=0.02-2 keV in 0.005 steps
+    'type': 'blackbody',
+    'temperature': 0.02 + 0.005 * np.arange(37),
     'weights': {
         'emin': 0.3,
         'emax': 1.0,
@@ -53,6 +56,14 @@ sss = {
 green = '\033[1;32;40m'
 red = '\033[1;31;40m'
 end = '\033[0;0m'
+
+# Check if num is a number
+def is_number(num):
+    try:
+        num = float(num)
+    except ValueError:
+        return(False)
+    return(True)
 
 # Integrate two arrays using the trapezoid rule
 def integrate_trapezoid(x, y):
@@ -124,31 +135,30 @@ class chandra():
 
         # Get options
         self.options = {'global': global_defaults,
+            'type': sss['type'],
             'weights': sss['weights'],
             'temperature': sss['temperature']}
 
 
     def add_options(self, parser=None, usage=None):
-        import optparse
+        import argparse
         if parser == None:
-            parser = optparse.OptionParser(usage=usage,
+            parser = argparse.ArgumentParser(usage=usage,
                 conflict_handler='resolve')
-        parser.add_option('--makeclean', default=False, action='store_true',
+        parser.add_argument('ra', default=None, type=str, help='RA')
+        parser.add_argument('dec', default=None, type=str, help='DEC')
+        parser.add_argument('--makeclean', default=False, action='store_true',
             help='Clean up all output files from previous runs then exit.')
-        parser.add_option('--download', default=False, action='store_true',
+        parser.add_argument('--download', default=False, action='store_true',
             help='Download the raw data files given input ra and dec.')
-        parser.add_option('--before', default=None, type='string',
+        parser.add_argument('--before', default=None, type=str,
             metavar='YYYY-MM-DD', help='Date after which we should reject '+\
             'all Chandra/ACIS observations for reduction.')
-        parser.add_option('--after', default=None, type='string',
+        parser.add_argument('--after', default=None, type=str,
             metavar='YYYY-MM-DD', help='Date before which we should reject '+\
             'all Chandra/ACIS observations for reduction.')
-        parser.add_option('--clobber', default=False, action='store_true',
+        parser.add_argument('--clobber', default=False, action='store_true',
             help='Overwrite files when using download mode.')
-        parser.add_option('--ra', default=None, metavar='deg/HH:MM:SS',
-            type='string', help='RA of interest.')
-        parser.add_option('--dec', default=None, metavar='deg/DD:MM:SS',
-            type='string', help='DEC of interest.')
         return(parser)
 
     def get_obstable(self, coord, radius, obsid=True):
@@ -181,6 +191,24 @@ class chandra():
         # Typically only care about unique obsid, so default is to clip on that
         if obsid:
             tbdata = unique(tbdata, keys='ObsId')
+
+        # Although using a large search radius, check to make sure that the
+        # input coordinates are < 5 arcmin off axis
+        remove = []
+        for i,row in enumerate(copy.copy(tbdata)):
+            coord = SkyCoord(row['RA'],row['Dec'],
+                unit=(u.deg, u.deg), frame='icrs')
+            if chandra.coord.separation(coord).arcmin > 5:
+                remove.append(i)
+        tbdata.remove_rows(remove)
+
+        # Require that all observations have SI Mode = TE (timed exposure)
+        # rather than CC = continuous clocking (and thus not imaging)
+        remove = []
+        for i,row in enumerate(copy.copy(tbdata)):
+            if not row['SIMode'].decode('utf-8').startswith('TE'):
+                remove.append(i)
+        tbdata.remove_rows(remove)
 
         # Check if we need before/after cuts
         remove = []
@@ -289,7 +317,7 @@ class chandra():
                     filename = 'acis_' + str(obsid) + '_evt2.fits.gz'
                     (success, ufile) = self.download_image(url, filename,
                         outdir=self.rawdir, clobber=False)
-                    if success:
+                    if success and ufile not in self.evt2files:
                         # Validate that the evt2 file has SUM_2X2, ORC_MODE
                         # OCLKPAIR, FEP_CCD variables.
                         hdu = fits.open(ufile, mode='update')
@@ -308,21 +336,25 @@ class chandra():
                     filename = 'acis_' + str(obsid) + '_asol1.fits.gz'
                     (success, ufile) = self.download_image(url, filename,
                         outdir=self.rawdir, clobber=False)
-                    if success:
+                    if success and ufile not in self.asolfiles:
+                        # We want to treat every observation as
+                        # separate/independent, so set OBI_NUM=0
+                        hdu = fits.open(ufile, mode='update')
+                        hdu['ASPSOL'].header['OBI_NUM'] = 0
                         self.asolfiles.append(ufile)
                 if 'bpix1' in file:
                     url = 'ftp://' + ftp_url + '/' + file
                     filename = 'acis_' + str(obsid) + '_bpix1.fits.gz'
                     (success, ufile) = self.download_image(url, filename,
                         outdir=self.rawdir, clobber=False)
-                    if success:
+                    if success and ufile not in self.bpixfiles:
                         self.bpixfiles.append(ufile)
                 if 'msk1' in file:
                     url = 'ftp://' + ftp_url + '/' + file
                     filename = 'acis_' + str(obsid) + '_msk1.fits.gz'
                     (success, ufile) = self.download_image(url, filename,
                         outdir=self.rawdir, clobber=False)
-                    if success:
+                    if success and ufile not in self.maskfiles:
                         self.maskfiles.append(ufile)
 
         # Make sure asol and evt2 files are sorted and matched to each other
@@ -351,13 +383,15 @@ class chandra():
         ewid = self.options['weights']['ewidth']
 
         # Construct the make_instmap_weights command
-        cmd = 'make_instmap_weights {weightfile} \"xsphabs.gal*xsbbody.p1\" '
-        cmd += 'paramvals=\"gal.nh={galnh};p1.kt={temp}\" '
-        cmd += 'emin={emin} emax={emax} ewidth={ewid}'
+        if self.options['type'] is 'blackbody':
+            cmd = 'make_instmap_weights {weightfile} '
+            cmd += '\"xsphabs.gal*xsbbody.p1\" '
+            cmd += 'paramvals=\"gal.nh={galnh};p1.kt={temp}\" '
+            cmd += 'emin={emin} emax={emax} ewidth={ewid}'
 
-        # Format with variable parameters
-        cmd = cmd.format(weightfile=weightfile, galnh=galnh, temp=temperature,
-            emin=emin, emax=emax, ewid=ewid)
+            # Format with variable parameters
+            cmd = cmd.format(weightfile=weightfile, galnh=galnh,
+                temp=temperature, emin=emin, emax=emax, ewid=ewid)
 
         if not stdout:
             cmd += ' > /dev/null 2> /dev/null'
@@ -375,15 +409,31 @@ class chandra():
     def merge_obs(self, files, asolfiles, bpixfiles, maskfiles,
         outdir, weightfile, coord=None, stdout=False):
 
-        # Get input file string
-        evt2_files = ','.join(files)
-        asol_files = ','.join(asolfiles)
-        bpix_files = ','.join(bpixfiles)
-        mask_files = ','.join(maskfiles)
+        # Make input file lists
+        evt2_files = 'evt2.lis'
+        asol_files = 'asol.lis'
+        bpix_files = 'bpix.lis'
+        mask_files = 'mask.lis'
+
+        with open(evt2_files, 'w') as f:
+            for file in files:
+                f.write("%s\n" % file)
+
+        with open(asol_files, 'w') as f:
+            for file in asolfiles:
+                f.write("%s\n" % file)
+
+        with open(bpix_files, 'w') as f:
+            for file in bpixfiles:
+                f.write("%s\n" % file)
+
+        with open(mask_files, 'w') as f:
+            for file in maskfiles:
+                f.write("%s\n" % file)
 
         # Basic merge_obs command just requires input files and output dir
-        cmd = 'merge_obs {files} {outdir} bands={bands} asolfiles={asol} '
-        cmd += 'badpixfiles={bpix} maskfiles={mask} '
+        cmd = 'merge_obs @{files} {outdir} bands={bands} '
+        cmd += 'asolfiles=@{asol} badpixfiles=@{bpix} maskfiles=@{mask} '
         cmd = cmd.format(files=evt2_files, outdir=outdir, bands=weightfile,
             asol=asol_files, bpix=bpix_files, mask=mask_files)
 
@@ -395,7 +445,7 @@ class chandra():
             cmd = cmd.format(ra=ra, dec=dec)
 
         if not stdout:
-            cmd += ' 2> /dev/null'
+            cmd += ' '
 
         # Now run command
         print(cmd)
@@ -493,21 +543,36 @@ class chandra():
 if __name__ == '__main__':
     # Start timer, create hst123 class obj, parse args
     start = time.time()
-    usagestring='USAGE: chandra.py'
+    usagestring='superchandra.py ra dec'
     chandra = chandra()
+
+    # Handle ra/dec in command line so there's no ambiguity about declination
+    if len(sys.argv) < 3:
+        print(usagestring)
+        sys.exit(1)
+    else:
+        ra = sys.argv[1]
+        dec = sys.argv[2]
+        if (not (is_number(ra) and is_number(dec)) and
+           (':' not in ra and ':' not in dec)):
+            error = 'ERROR: cannot interpret ra={ra}, dec={dec}.'
+            print(error.format(ra=ra, dec=dec))
+            sys.exit(1)
+        else:
+            chandra.coord = parse_coord(ra, dec)
+            sys.argv[1] = str(chandra.coord.ra.degree)
+            sys.argv[2] = str(chandra.coord.dec.degree)
+
     parser = chandra.add_options(usage=usagestring)
-    options, args = parser.parse_args()
+    options = parser.parse_args()
 
     if options.before is not None:
         chandra.before = dateparse(options.before)
     if options.after is not None:
         chandra.after = dateparse(options.after)
 
-    # Parse the input coordinate
-    chandra.coord = parse_coord(options.ra, options.dec)
-
     # Starting banner
-    message = 'Starting chandra.py'
+    message = 'Starting superchandra.py'
     chandra.make_banner(message)
 
     # Grab obs table for input coordinate
@@ -521,7 +586,7 @@ if __name__ == '__main__':
     message = 'There are {n} unique observation IDs in the obstable\n'+\
               'TOTAL EXPTIME: {time} ks\n'
     print(message.format(n=len(chandra.obstable),
-        time=np.sum(chandra.obstable['Exposure'])))
+        time='%7.2f' % np.sum(chandra.obstable['Exposure'])))
 
     # Download the image files for each unique observation ID
     message = 'Downloading images for unique observation IDs...'
@@ -558,7 +623,13 @@ if __name__ == '__main__':
         outdir = outdir.replace(' ','')
 
         # Make instmap weight file and merge observations
+        banner = 'Making weight file: {weights}'
+        chandra.make_banner(banner.format(weights=weightfile))
         chandra.make_instmap_weights(weightfile, temp, galnh, stdout=True)
+
+        banner = 'Running merge_obs with weight file: {weights}'
+        chandra.make_banner(banner.format(weights=weightfile))
+
         chandra.merge_obs(chandra.evt2files, chandra.asolfiles,
             chandra.bpixfiles, chandra.maskfiles,
             outdir, weightfile, coord=chandra.coord)

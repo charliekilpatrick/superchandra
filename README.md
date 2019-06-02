@@ -1,4 +1,4 @@
-# chandra123
+# superchandra
 
 # DESCRIPTION
 A set of scripts for downloading and analyzing Chandra/ACIS image files for detecting or placing upper limits on the presence of emission at a set of input coordinates.
@@ -14,5 +14,5 @@ After installing ciao, you can set up the remainder of the chandra123 environmen
 alias ciao='source $CIAO_DIR/ciao-4.11/bin/ciao.bash'
 ciao
 pip3 freeze > $ASCDS_INSTALL/constraints.txt
-pip3 install -c $ASCDS_INSTALL/constraints.txt 'astropy<3.1' requests xmltodict
+pip3 install -c $ASCDS_INSTALL/constraints.txt 'astropy<3.1' requests xmltodict photutils
 ```
