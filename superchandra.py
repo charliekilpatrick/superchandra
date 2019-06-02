@@ -92,8 +92,13 @@ def gunzip(file):
     os.system('gunzip -f '+file)
     return(newfile)
 
-# Get MW Av based on input ra and dec.  Option to calculate it in terms of
-# nH using the conversion factor in Guver & Ozel, 2009, MNRAS, 400, 2050
+def Av_to_nH(Av):
+
+    # Convert Av to nH using the conversion factor in
+    # Guver & Ozel, 2009, MNRAS, 400, 2050
+    return(2.21e21 * float(Av))
+
+# Get MW Av based on input ra and dec
 def get_MW_Av(coord, nH=False):
 
     url = 'https://irsa.ipac.caltech.edu/cgi-bin/DUST/nph-dust?'
@@ -106,7 +111,7 @@ def get_MW_Av(coord, nH=False):
     Av = float(value.split()[0]) * 3.1
     # Convert to nH if necessary
     if nH:
-        return(2.21e21 * float(Av))
+        return(Av_to_nH(Av))
     return(Av)
 
 class chandra():
@@ -120,6 +125,9 @@ class chandra():
         self.weightdir = 'weights/'
         self.outtable = 'output.phot'
         self.obstable = None
+
+        self.mwg_column = 0.
+        self.hst_column = 0.
 
         # Dictionary with data output from post-processing analysis
         # Names for output photometry table
@@ -159,6 +167,11 @@ class chandra():
             'all Chandra/ACIS observations for reduction.')
         parser.add_argument('--clobber', default=False, action='store_true',
             help='Overwrite files when using download mode.')
+        parser.add_argument('--extinction', default=0., type=float,
+            help='Host exinction (Av) for the observed SN.  MW-like dust is'+\
+            ' assumed and relationship in Guver & Ozel 2009.')
+        parser.add_argument('--redshift','-z', default=0., type=float,
+            help='Host redshift for evaluating extinction.')
         return(parser)
 
     def get_obstable(self, coord, radius, obsid=True):
@@ -374,7 +387,7 @@ class chandra():
 
 
     # Generate a weight file using the ciao make_instmap_weights method
-    def make_instmap_weights(self, weightfile, temperature, galnh,
+    def make_instmap_weights(self, weightfile, temperature, galnh, hostnh, z,
         stdout=False):
 
         # Get the parameters for instmap from options
@@ -385,13 +398,14 @@ class chandra():
         # Construct the make_instmap_weights command
         if self.options['type'] is 'blackbody':
             cmd = 'make_instmap_weights {weightfile} '
-            cmd += '\"xsphabs.gal*xsbbody.p1\" '
-            cmd += 'paramvals=\"gal.nh={galnh};p1.kt={temp}\" '
+            cmd += '\"xszphabs.host*xsphabs.gal*xsbbody.p1\" '
+            cmd += 'paramvals=\"host.nh={hostnh};host.redshift={z};'
+            cmd += 'gal.nh={galnh};p1.kt={temp}\" '
             cmd += 'emin={emin} emax={emax} ewidth={ewid}'
 
             # Format with variable parameters
-            cmd = cmd.format(weightfile=weightfile, galnh=galnh,
-                temp=temperature, emin=emin, emax=emax, ewid=ewid)
+            cmd = cmd.format(weightfile=weightfile, hostnh=hostnh, z=z,
+                galnh=galnh, temp=temperature, emin=emin, emax=emax, ewid=ewid)
 
         if not stdout:
             cmd += ' > /dev/null 2> /dev/null'
@@ -601,23 +615,29 @@ if __name__ == '__main__':
     chandra.make_banner(message)
 
     # Galactic nH
-    galnh = get_MW_Av(chandra.coord, nH=True) / 1.0e22
+    chandra.mwg_column = get_MW_Av(chandra.coord, nH=True) / 1.0e22
+    chandra.hst_column = Av_to_nH(options.extinction) / 1.0e22
     message = 'Galactic nH toward ra={ra}, dec={dec} is nH={nH}'
     print(message.format(ra=chandra.coord.ra.degree,
-        dec=chandra.coord.dec.degree, nH=galnh))
+        dec=chandra.coord.dec.degree, nH=chandra.mwg_column,
+        host_nH=chandra.mwg_column))
 
     # Now iterate over spectral models that we want to use
     if not os.path.exists(chandra.weightdir):
         os.makedirs(chandra.weightdir)
     for temp in chandra.options['temperature']:
         # Print banner
-        message = 'Starting analysis with temperature={temp}, nH={nH}'
-        chandra.make_banner(message.format(temp=temp, nH=galnh))
+        message = 'Starting analysis with '
+        message += 'temperature={temp}, nH={nH}, host_nH={host_nH}, host_z={z}'
+        chandra.make_banner(message.format(temp=temp,
+            nH=chandra.mwg_column, host_nH=chandra.hst_column,
+            z=options.redshift))
 
         # Construct variables for outdir and weightfile
         weightfile = chandra.weightdir + 'weights.t{temp}.nH{nH}'
         outdir = 't{temp}/'
-        weightfile = weightfile.format(temp='%7.4f' % temp, nH='%7.4f' % galnh)
+        weightfile = weightfile.format(temp='%7.4f' % temp,
+            nH='%7.4f' % chandra.mwg_column)
         weightfile = weightfile.replace(' ','')
         outdir = outdir.format(temp='%7.4f' % temp)
         outdir = outdir.replace(' ','')
@@ -625,7 +645,8 @@ if __name__ == '__main__':
         # Make instmap weight file and merge observations
         banner = 'Making weight file: {weights}'
         chandra.make_banner(banner.format(weights=weightfile))
-        chandra.make_instmap_weights(weightfile, temp, galnh, stdout=True)
+        chandra.make_instmap_weights(weightfile, temp, chandra.mwg_column,
+            chandra.hst_column, options.redshift, stdout=True)
 
         banner = 'Running merge_obs with weight file: {weights}'
         chandra.make_banner(banner.format(weights=weightfile))
