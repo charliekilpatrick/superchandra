@@ -342,6 +342,9 @@ class chandra():
                             hdu['EVENTS'].header['OCLKPAIR'] = 8
                         if 'FEP_CCD' not in hdu['EVENTS'].header.keys():
                             hdu['EVENTS'].header['FEP_CCD'] = 275638
+                        asolfile = 'acis_{obsid}_asol1.fits'
+                        asolfile = asolfile.format(obsid=obsid)
+                        hdu['EVENTS'].header['ASOLFILE'] = asolfile
                         hdu.close()
                         self.evt2files.append(ufile)
                 if 'asol1' in file:
