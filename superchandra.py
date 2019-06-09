@@ -5,6 +5,8 @@ By C. D. Kilpatrick 2019-05-25
 
 v1.00: 2019-05-25. Base Chandra download, running ciao scripts
 v1.01: 2019-06-02. Fixed issues with CC images, missing ASOL, off axis images
+v1.02: 2019-06-09. Added options for host extinction and redshift.  Modified
+                   script to stop if no images are found.
 
 chandra.py: A set of scripts for downloading and analyzing Chandra/ACIS image
 files for detecting or placing upper limits on the presence of emission at a
@@ -612,6 +614,13 @@ if __name__ == '__main__':
         message = 'ERROR: could not properly download images'
         print(message)
         sys.exit(1)
+
+    if len(chandra.obstable) == 0:
+        message = 'WARNING: there are no images for ra={ra}, dec={dec}.  '
+        message += 'Exiting...'
+        print(message.format(ra=chandra.coord.ra.degree,
+            dec=chandra.coord.dec.degree))
+        sys.exit(0)
 
     # Get metadata
     message = 'Starting analysis of Chandra/ACIS images...'
