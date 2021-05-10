@@ -44,14 +44,38 @@ global_defaults = {
     'bin': 1
 }
 sss = {
-    # blackbody with T=0.02-2 keV in 0.005 steps
     'type': 'blackbody',
-    'temperature': 0.02 + 0.005 * np.arange(37),
-    'weights': {
-        'emin': 0.3,
-        'emax': 1.0,
-        'ewidth': 0.02
-    }
+    'models': []}
+
+# blackbody with T=0.02-2 keV in 0.005 steps
+for temp in np.arange(37):
+    sss['models'].append({
+        'name': 't{0}'.format('%7.4f'%(0.02+0.005*temp)),
+        'temperature': 0.02+0.005*temp,
+        'weights': {
+            'emin': 0.3,
+            'emax': 1.0,
+            'ewidth': 0.02
+        }})
+
+# Soft and hard state black hole
+bh = {
+    'type': 'blackhole',
+    'models':[
+        {'name': 'soft',
+         'temperature': 1.0,
+         'weights': {
+            'emin': 0.3,
+            'emax': 10.0,
+            'ewidth': 0.02
+        }},
+        {'name': 'hard',
+         'gamma': 0.5,
+         'weights': {
+            'emin': 0.3,
+            'emax': 10.0,
+            'ewidth': 0.02
+        }}]
 }
 
 # Color strings for download messages
@@ -128,6 +152,8 @@ class chandra():
         self.outtable = 'output.phot'
         self.obstable = None
 
+        self.keepshort = False
+
         self.mwg_column = 0.
         self.hst_column = 0.
 
@@ -144,11 +170,11 @@ class chandra():
         self.maskfiles = []
 
         # Get options
-        self.options = {'global': global_defaults,
-            'type': sss['type'],
-            'weights': sss['weights'],
-            'temperature': sss['temperature']}
+        self.modeltype = 'sss'
+        self.options = {'global': global_defaults}
 
+        if self.modeltype.strip() == 'sss':
+            self.options['spectrum']=sss
 
     def add_options(self, parser=None, usage=None):
         import argparse
@@ -174,7 +200,20 @@ class chandra():
             ' assumed and relationship in Guver & Ozel 2009.')
         parser.add_argument('--redshift','-z', default=0., type=float,
             help='Host redshift for evaluating extinction.')
+        parser.add_argument('--quick','-q', default=False, action='store_true',
+            help='Only calculate the first model in a given set.')
+        parser.add_argument('--model','-m', default='sss', type=str,
+            help='Model spectrum to use (options are sss|bh).')
+        parser.add_argument('--search_radius','-s', default=0.1667, type=float,
+            help='Override search radius with input value (units are degrees).')
         return(parser)
+
+    def set_spectrum(self, spectrum_type):
+
+        if spectrum_type=='sss':
+            self.options['spectrum']=sss
+        elif spectrum_type=='bh':
+            self.options['spectrum']=bh
 
     def get_obstable(self, coord, radius, obsid=True):
         url = self.options['global']['uri']
@@ -186,7 +225,7 @@ class chandra():
             'grating': 'NONE',
             'inst': 'ACIS-I,ACIS-S'
         }
-        try:
+        if True:
             # Try to get a response from the URL
             r = requests.get(url, params=params)
 
@@ -198,22 +237,29 @@ class chandra():
             f.close()
             votable = parse(fname)
             os.remove(fname)
-        except:
-            return(None)
+        #except:
+        #    return(None)
 
         tbdata = votable.get_first_table().to_table()
+
+        if len(tbdata)==0:
+            return(tbdata)
 
         # Typically only care about unique obsid, so default is to clip on that
         if obsid:
             tbdata = unique(tbdata, keys='ObsId')
 
+        coords = SkyCoord(tbdata['RA'], tbdata['Dec'], unit=(u.deg, u.deg),
+            frame='icrs')
+        separation = coord.separation(coords)
+
         # Although using a large search radius, check to make sure that the
         # input coordinates are < 5 arcmin off axis
         remove = []
         for i,row in enumerate(copy.copy(tbdata)):
-            coord = SkyCoord(row['RA'],row['Dec'],
+            row_coord = SkyCoord(row['RA'],row['Dec'],
                 unit=(u.deg, u.deg), frame='icrs')
-            if chandra.coord.separation(coord).arcmin > 5:
+            if self.coord.separation(row_coord).arcmin > radius * 60.:
                 remove.append(i)
         tbdata.remove_rows(remove)
 
@@ -221,6 +267,7 @@ class chandra():
         # rather than CC = continuous clocking (and thus not imaging)
         remove = []
         for i,row in enumerate(copy.copy(tbdata)):
+            print(row['SIMode'].decode('utf-8'))
             if not row['SIMode'].decode('utf-8').startswith('TE'):
                 remove.append(i)
         tbdata.remove_rows(remove)
@@ -246,7 +293,12 @@ class chandra():
                         date=self.after.strftime('%Y-%m-%d')))
                     remove.append(i)
 
+
         tbdata.remove_rows(remove)
+
+        if not self.keepshort:
+            mask = tbdata['Exposure']>5.0
+            tbdata = tbdata[mask]
 
         return(tbdata)
 
@@ -392,25 +444,42 @@ class chandra():
 
 
     # Generate a weight file using the ciao make_instmap_weights method
-    def make_instmap_weights(self, weightfile, temperature, galnh, hostnh, z,
+    def make_instmap_weights(self, weightfile, model, galnh, hostnh, z,
         stdout=False):
 
+        if os.path.isfile(weightfile):
+            return(True)
+
         # Get the parameters for instmap from options
-        emin = self.options['weights']['emin']
-        emax = self.options['weights']['emax']
-        ewid = self.options['weights']['ewidth']
+        emin = model['weights']['emin']
+        emax = model['weights']['emax']
+        ewid = model['weights']['ewidth']
 
         # Construct the make_instmap_weights command
-        if self.options['type'] is 'blackbody':
+        # This is for a blackbody
+        spectrum = ''
+        if 'temperature' in model.keys():
             cmd = 'make_instmap_weights {weightfile} '
             cmd += '\"xszphabs.host*xsphabs.gal*xsbbody.p1\" '
             cmd += 'paramvals=\"host.nh={hostnh};host.redshift={z};'
-            cmd += 'gal.nh={galnh};p1.kt={temp}\" '
+            cmd += 'gal.nh={galnh};p1.kt={spectrum}\" '
             cmd += 'emin={emin} emax={emax} ewidth={ewid}'
 
-            # Format with variable parameters
-            cmd = cmd.format(weightfile=weightfile, hostnh=hostnh, z=z,
-                galnh=galnh, temp=temperature, emin=emin, emax=emax, ewid=ewid)
+            spectrum = '%7.4f'%model['temperature']
+
+        # Use power law if gamma is in keys
+        elif 'gamma' in model.keys():
+            cmd = 'make_instmap_weights {weightfile} '
+            cmd += '\"xszphabs.host*xsphabs.gal*powlaw1d.p1\" '
+            cmd += 'paramvals=\"host.nh={hostnh};host.redshift={z};'
+            cmd += 'gal.nh={galnh};p1.gamma={spectrum}\" '
+            cmd += 'emin={emin} emax={emax} ewidth={ewid}'
+
+            spectrum = '%7.4f'%model['gamma']
+
+        # Format with remaining variable parameters
+        cmd = cmd.format(weightfile=weightfile, hostnh=hostnh, z=z,
+                spectrum=spectrum, galnh=galnh, emin=emin, emax=emax, ewid=ewid)
 
         if not stdout:
             cmd += ' > /dev/null 2> /dev/null'
@@ -434,6 +503,9 @@ class chandra():
         bpix_files = 'bpix.lis'
         mask_files = 'mask.lis'
 
+        if not os.path.exists('tmpdir/'):
+            os.makedirs('tmpdir/')
+
         with open(evt2_files, 'w') as f:
             for file in files:
                 f.write("%s\n" % file)
@@ -451,8 +523,9 @@ class chandra():
                 f.write("%s\n" % file)
 
         # Basic merge_obs command just requires input files and output dir
-        cmd = 'merge_obs @{files} {outdir} bands={bands} '
+        cmd = 'merge_obs @{files} {outdir} bands={bands} --clobber=yes '
         cmd += 'asolfiles=@{asol} badpixfiles=@{bpix} maskfiles=@{mask} '
+        cmd += '--cleanup=yes tmpdir=\"tmpdir/\" '
         cmd = cmd.format(files=evt2_files, outdir=outdir, bands=weightfile,
             asol=asol_files, bpix=bpix_files, mask=mask_files)
 
@@ -467,18 +540,25 @@ class chandra():
             cmd += ' '
 
         # Now run command
-        print(cmd)
-        os.system(cmd)
+        tries = 0
+        while ((not os.path.exists(outdir + '/merged_evt.fits') or
+            not os.path.exists(outdir + 'band1_thresh.expmap')) and tries < 3):
+            print(cmd)
+            os.system(cmd)
+            tries += 1
 
         # Check that we output the correct files
-        if (os.path.isfile(outdir + '/merged_evt.fits') and
-            os.path.isfile(outdir + '/band1_thresh.expmap')):
+        if os.path.isfile(outdir + '/merged_evt.fits'):
             # Filter merged_evt.fits into merged file
-            cmd_merge = 'dmcopy {outdir}merged_evt.fits[EVENTS] '
-            cmd_merge += '{outdir}merged.fits option=image'
-            cmd_merge = cmd_merge.format(outdir=outdir)
-            os.system(cmd_merge)
-            return(True)
+            if not os.path.isfile(outdir + '/merged.fits'):
+                cmd_merge = 'dmcopy {outdir}merged_evt.fits[EVENTS] '
+                cmd_merge += '{outdir}merged.fits option=image'
+                cmd_merge = cmd_merge.format(outdir=outdir)
+                os.system(cmd_merge)
+            if not os.path.isfile(outdir +'/merged.fits'):
+                return(False)
+            else:
+                return(True)
         else:
             return(False)
 
@@ -532,32 +612,31 @@ class chandra():
 
         return(average_energy)
 
-    def get_bolometric_correction(self, temperature):
+    def get_bolometric_correction(self, model, spectype='blackbody'):
 
-        # Assuming that the input temperature is in keV, which is default
-        # input for ciao/make_instmap_weights
-        conversion = 12.3986006
-        wavelengths = 1.0e-2 + 1.0e-2 * np.arange(60000)
+        if spectype=='blackbody':
+            # Assuming that the input temperature is in keV, which is default
+            # input for ciao/make_instmap_weights
+            conversion = 12.3986006
+            wavelengths = 1.0e-2 + 1.0e-2 * np.arange(60000)
+            temperature = model['temperature']
 
-        # Get index range corresponding to emin->emax
-        # Get index range corresponding to emin->emax
-        idx1 = (np.abs(wavelengths -
-            (conversion / self.options['weights']['emax']))).argmin()
-        idx2 = (np.abs(wavelengths -
-            (conversion / self.options['weights']['emin']))).argmin()
+            # Get index range corresponding to emin->emax
+            # Get index range corresponding to emin->emax
+            idx1 = (np.abs(wavelengths -
+                (conversion / model['weights']['emax']))).argmin()
+            idx2 = (np.abs(wavelengths -
+                (conversion / model['weights']['emin']))).argmin()
 
-        # Calculate Planck's law for temp in keV, wavelength in angstrom
-        in_band_wave = wavelengths[idx1:idx2]
-        in_band = integrate_trapezoid(in_band_wave, in_band_wave**(-5) /
-            (np.exp(conversion/(in_band_wave * temperature)) - 1))
-        bolometric = integrate_trapezoid(wavelengths, wavelengths**(-5) /
-            (np.exp(conversion/(wavelengths * temperature)) - 1))
+            # Calculate Planck's law for temp in keV, wavelength in angstrom
+            in_band_wave = wavelengths[idx1:idx2]
+            in_band = integrate_trapezoid(in_band_wave, in_band_wave**(-5) /
+                (np.exp(conversion/(in_band_wave * temperature)) - 1))
+            bolometric = integrate_trapezoid(wavelengths, wavelengths**(-5) /
+                (np.exp(conversion/(wavelengths * temperature)) - 1))
 
-        bccorr = in_band / bolometric
-        return(bccorr)
-
-
-
+            bccorr = in_band / bolometric
+            return(bccorr)
 
 if __name__ == '__main__':
     # Start timer, create hst123 class obj, parse args
@@ -585,10 +664,25 @@ if __name__ == '__main__':
     parser = chandra.add_options(usage=usagestring)
     options = parser.parse_args()
 
+    # Set the model spectrum type
+    chandra.set_spectrum(options.model)
+
     if options.before is not None:
         chandra.before = dateparse(options.before)
     if options.after is not None:
         chandra.after = dateparse(options.after)
+
+    if options.quick:
+        models = chandra.options['spectrum']['models']
+
+        # For quick mode, only execute one model depending on type
+        if options.model=='sss':
+            chandra.options['spectrum']['models']=[models[12]]
+        elif options.model=='bh':
+            chandra.options['spectrum']['models']=[models[0]]
+
+    if options.search_radius:
+        chandra.options['global']['radius']=options.search_radius
 
     # Starting banner
     message = 'Starting superchandra.py'
@@ -600,6 +694,11 @@ if __name__ == '__main__':
         dec=chandra.coord.dec.degree))
     chandra.obstable = chandra.get_obstable(chandra.coord,
         chandra.options['global']['radius'])
+
+    if not chandra.obstable or len(chandra.obstable)==0:
+        print('WARNING: no observations to download for input coordinates.')
+        print('Exiting...')
+        sys.exit()
 
     # Analysis on observation IDs
     message = 'There are {n} unique observation IDs in the obstable\n'+\
@@ -637,35 +736,68 @@ if __name__ == '__main__':
     # Now iterate over spectral models that we want to use
     if not os.path.exists(chandra.weightdir):
         os.makedirs(chandra.weightdir)
-    for temp in chandra.options['temperature']:
-        # Print banner
-        message = 'Starting analysis with '
-        message += 'temperature={temp}, nH={nH}, host_nH={host_nH}, host_z={z}'
-        chandra.make_banner(message.format(temp=temp,
-            nH=chandra.mwg_column, host_nH=chandra.hst_column,
-            z=options.redshift))
 
-        # Construct variables for outdir and weightfile
-        weightfile = chandra.weightdir + 'weights.t{temp}.nH{nH}'
-        outdir = 't{temp}/'
-        weightfile = weightfile.format(temp='%7.4f' % temp,
-            nH='%7.4f' % chandra.mwg_column)
+    for model in chandra.options['spectrum']['models']:
+
+        weightfile = chandra.weightdir + 'weights.'
+        outdir = model['name'] + '/'
+        spectrum = 0.
+        spectype = ''
+
+        if 'temperature' in model.keys():
+
+            temp = np.round(model['temperature'], decimals=4)
+            spectrum = temp
+            spectype = 'blackbody'
+
+            message = 'Starting analysis with '
+            message += 'temperature={temp}, nH={nH}, host_nH={host_nH}, '
+            message += 'host_z={z}'
+            chandra.make_banner(message.format(temp=temp,
+                nH=chandra.mwg_column, host_nH=chandra.hst_column,
+                z=options.redshift))
+
+            weightfile += 't{0}.nH{1}'.format('%7.4f'%temp,
+                '%7.4f'%chandra.mwg_column)
+
+        elif 'gamma' in model.keys():
+
+            gamma = np.round(model['gamma'], decimals=4)
+            spectrum = gamma
+            spectype = 'powerlaw'
+
+            message = 'Starting analysis with '
+            message += 'gamma={gamma}, nH={nH}, host_nH={host_nH}, '
+            message += 'host_z={z}'
+            chandra.make_banner(message.format(gamma=gamma,
+                nH=chandra.mwg_column, host_nH=chandra.hst_column,
+                z=options.redshift))
+
+            weightfile += 'g{0}.nH{1}'.format('%7.4f'%gamma,
+                '%7.4f'%chandra.mwg_column)
+
+
         weightfile = weightfile.replace(' ','')
-        outdir = outdir.format(temp='%7.4f' % temp)
         outdir = outdir.replace(' ','')
 
         # Make instmap weight file and merge observations
         banner = 'Making weight file: {weights}'
         chandra.make_banner(banner.format(weights=weightfile))
-        chandra.make_instmap_weights(weightfile, temp, chandra.mwg_column,
+        chandra.make_instmap_weights(weightfile, model, chandra.mwg_column,
             chandra.hst_column, options.redshift, stdout=True)
 
         banner = 'Running merge_obs with weight file: {weights}'
         chandra.make_banner(banner.format(weights=weightfile))
 
-        chandra.merge_obs(chandra.evt2files, chandra.asolfiles,
+        check = chandra.merge_obs(chandra.evt2files, chandra.asolfiles,
             chandra.bpixfiles, chandra.maskfiles,
             outdir, weightfile, coord=chandra.coord)
+
+        if not check:
+            warning = 'WARNING: merge_obs did not successfully complete '
+            warning += 'for params={0}'.format(temp)
+            print(warning)
+            continue
 
         # Do post-processing analysis on the data
         # 1) Calculate total number of counts and background in merged event map
@@ -681,7 +813,7 @@ if __name__ == '__main__':
         energy = chandra.analyze_weightfile(weightfile)
 
         # 4) Get bolometric correction based on the input temperature
-        bccorr = chandra.get_bolometric_correction(temp)
+        bccorr = chandra.get_bolometric_correction(model, spectype=spectype)
 
         # 5) Calculate bolometric flux in erg/s/cm2 from all data
         flux = (total - background) * energy / exposure / bccorr * 1.60218e-9
@@ -693,7 +825,7 @@ if __name__ == '__main__':
         lam = (total + 1) * (1 - 1/(9*(total+1)) + 3.0/(3*np.sqrt(total+1)))**3
         lam_flux = (lam - background) * energy / exposure / bccorr * 1.60218e-9
 
-        chandra.final_phot.add_row((temp, flux, lam_flux, sn, total,
+        chandra.final_phot.add_row((spectrum, flux, lam_flux, sn, total,
             background, energy, bccorr, exposure))
 
     message = 'Printing final output photometry to table={table}'
