@@ -15,7 +15,7 @@ set of input coordinates.
 
 import warnings
 warnings.filterwarnings('ignore')
-import os,requests,sys,io,shutil,time,gzip,ftplib,xmltodict,copy
+import os,requests,sys,io,shutil,time,gzip,ftplib,xmltodict,copy,glob
 from astropy.io.votable import parse
 from astropy import utils
 from astropy.coordinates import SkyCoord
@@ -23,6 +23,7 @@ from astropy import units as u
 from astropy.table import unique,Table
 from astropy.time import Time
 from astropy.io import ascii,fits
+from astropy.wcs import WCS
 from dateutil.parser import parse as dateparse
 import numpy as np
 from photutils import SkyCircularAperture,SkyCircularAnnulus,aperture_photometry
@@ -66,14 +67,14 @@ bh = {
          'temperature': 1.0,
          'weights': {
             'emin': 0.3,
-            'emax': 10.0,
+            'emax': 9.98,
             'ewidth': 0.02
         }},
         {'name': 'hard',
          'gamma': 0.5,
          'weights': {
             'emin': 0.3,
-            'emax': 10.0,
+            'emax': 9.98,
             'ewidth': 0.02
         }}]
 }
@@ -267,8 +268,11 @@ class chandra():
         # rather than CC = continuous clocking (and thus not imaging)
         remove = []
         for i,row in enumerate(copy.copy(tbdata)):
-            print(row['SIMode'].decode('utf-8'))
-            if not row['SIMode'].decode('utf-8').startswith('TE'):
+            if not isinstance(row['SIMode'], str):
+                mode = row['SIMode'].decode('utf-8')
+            else:
+                mode = row['SIMode']
+            if not mode.startswith('TE'):
                 remove.append(i)
         tbdata.remove_rows(remove)
 
@@ -353,41 +357,28 @@ class chandra():
         # Define the search coord/radius and grab all that
         # correspond to this region
 
-        # First login to Chandra FTP server
-        ftp_url = self.options['global']['ftp']
-        ftp = ftplib.FTP(ftp_url)
-        ftp.login('anonymous','')
-
         if not os.path.exists(self.rawdir):
             os.makedirs(self.rawdir)
 
         for row in obstable:
             # Get obsid from obstable
-            obsid = row['ObsId']
+            obsid = str(row['ObsId'])
 
-            # Get the first digit of the obsid
-            digit = int(obsid) % 10
+            cmd = f'download_chandra_obsid {obsid} evt2,bpix,asol,msk'
 
-            # Construct ftp url
-            files = []
-            for subdir in ['primary/', 'secondary/']:
-                listdir = self.options['global']['ftp_dir'] + subdir
-                listdir = listdir.format(digit, obsid)
+            os.system(cmd)
 
-                # Get complete list of files
-                files += ftp.nlst(listdir)
+            files = glob.glob(os.path.join(obsid, 'primary','*.fits.gz'))
+            files += glob.glob(os.path.join(obsid, 'secondary','*.fits.gz'))
 
             # Now iterate over files and grab the ones we want
             for file in files:
                 if 'evt2' in file:
-                    url = 'ftp://' + ftp_url + '/' + file
-                    filename = 'acis_' + str(obsid) + '_evt2.fits.gz'
-                    (success, ufile) = self.download_image(url, filename,
-                        outdir=self.rawdir, clobber=False)
-                    if success and ufile not in self.evt2files:
+                    filename = f'raw/acis_{obsid}_evt2.fits.gz'
+                    if filename not in self.evt2files:
                         # Validate that the evt2 file has SUM_2X2, ORC_MODE
                         # OCLKPAIR, FEP_CCD variables.
-                        hdu = fits.open(ufile, mode='update')
+                        hdu = fits.open(file, mode='update')
                         if 'SUM_2X2' not in hdu['EVENTS'].header.keys():
                             hdu['EVENTS'].header['SUM_2X2'] = 0
                         if 'ORC_MODE' not in hdu['EVENTS'].header.keys():
@@ -396,36 +387,33 @@ class chandra():
                             hdu['EVENTS'].header['OCLKPAIR'] = 8
                         if 'FEP_CCD' not in hdu['EVENTS'].header.keys():
                             hdu['EVENTS'].header['FEP_CCD'] = 275638
-                        asolfile = 'acis_{obsid}_asol1.fits'
-                        asolfile = asolfile.format(obsid=obsid)
+                        asolfile = f'acis_{obsid}_asol1.fits'
                         hdu['EVENTS'].header['ASOLFILE'] = asolfile
-                        hdu.close()
-                        self.evt2files.append(ufile)
+                        hdu.writeto(filename, overwrite=True,
+                            output_verify='silentfix')
+                        self.evt2files.append(filename)
                 if 'asol1' in file:
-                    url = 'ftp://' + ftp_url + '/' + file
-                    filename = 'acis_' + str(obsid) + '_asol1.fits.gz'
-                    (success, ufile) = self.download_image(url, filename,
-                        outdir=self.rawdir, clobber=False)
-                    if success and ufile not in self.asolfiles:
+                    filename = f'raw/acis_{obsid}_asol1.fits.gz'
+                    if filename not in self.asolfiles:
                         # We want to treat every observation as
                         # separate/independent, so set OBI_NUM=0
-                        hdu = fits.open(ufile, mode='update')
+                        hdu = fits.open(file, mode='update')
                         hdu['ASPSOL'].header['OBI_NUM'] = 0
-                        self.asolfiles.append(ufile)
+                        hdu.writeto(filename, overwrite=True,
+                            output_verify='silentfix')
+                        self.asolfiles.append(filename)
                 if 'bpix1' in file:
-                    url = 'ftp://' + ftp_url + '/' + file
-                    filename = 'acis_' + str(obsid) + '_bpix1.fits.gz'
-                    (success, ufile) = self.download_image(url, filename,
-                        outdir=self.rawdir, clobber=False)
-                    if success and ufile not in self.bpixfiles:
-                        self.bpixfiles.append(ufile)
+                    filename = f'raw/acis_{obsid}_bpix1.fits.gz'
+                    if filename not in self.bpixfiles:
+                        shutil.copyfile(file, filename)
+                        self.bpixfiles.append(filename)
                 if 'msk1' in file:
-                    url = 'ftp://' + ftp_url + '/' + file
-                    filename = 'acis_' + str(obsid) + '_msk1.fits.gz'
-                    (success, ufile) = self.download_image(url, filename,
-                        outdir=self.rawdir, clobber=False)
-                    if success and ufile not in self.maskfiles:
-                        self.maskfiles.append(ufile)
+                    filename = f'raw/acis_{obsid}_msk1.fits.gz'
+                    if filename not in self.maskfiles:
+                        shutil.copyfile(file, filename)
+                        self.maskfiles.append(filename)
+
+            shutil.rmtree(obsid)
 
         # Make sure asol and evt2 files are sorted and matched to each other
         if len(self.asolfiles) == len(self.evt2files):
@@ -454,6 +442,9 @@ class chandra():
         emin = model['weights']['emin']
         emax = model['weights']['emax']
         ewid = model['weights']['ewidth']
+
+        if emax>10.0:
+            emax = str(10.)
 
         # Construct the make_instmap_weights command
         # This is for a blackbody
@@ -564,9 +555,10 @@ class chandra():
 
     def do_photometry(self, image, coord, radius=2.216):
 
-        #
         hdu = fits.open(image)
         pixscale = np.abs(hdu[0].header['CDELT1'])
+
+        wcs = WCS(hdu[0].header)
 
         # Construct apertures for photometry and background
         aperture = SkyCircularAperture(coord, radius * u.arcsec)
@@ -574,8 +566,8 @@ class chandra():
             (4*radius) * u.arcsec)
 
         # Do photometry for counts and backgroundn
-        phot_table = aperture_photometry(hdu, aperture)
-        back_table = aperture_photometry(hdu, background)
+        phot_table = aperture_photometry(hdu[0].data, aperture, wcs=wcs)
+        back_table = aperture_photometry(hdu[0].data, background, wcs=wcs)
 
         # Get photometry data and rescale background to area of photometry
         phot = phot_table['aperture_sum'][0]
@@ -589,14 +581,17 @@ class chandra():
         hdu = fits.open(expmap)
         pixscale = np.abs(hdu[0].header['CDELT1'])
 
+        wcs = WCS(hdu[0].header)
+
         # Construct an aperture from the coordinate
         aperture = SkyCircularAperture(coord, radius * u.arcsec)
 
         # Do photometry on the image
-        phot_table = aperture_photometry(hdu, aperture)
+        phot_table = aperture_photometry(hdu[0].data, aperture, wcs=wcs)
 
         # Get photometry value and rescale to per pixel
-        phot = phot_table['aperture_sum'].value[0]
+        phot = phot_table['aperture_sum'][0]
+        print(phot)
         phot_per_pixel = phot * (pixscale * 3600.0)**2 / (np.pi * radius**2)
 
         return(phot_per_pixel)
