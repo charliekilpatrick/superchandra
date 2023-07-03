@@ -8,7 +8,7 @@ In addition to the requirements in requirements.txt, this script requires the la
 
 ciao can be installed from: http://cxc.harvard.edu/ciao/threads/ciao_install_tool/
 
-After installing ciao, you can set up the remainder of the chandra123 environment with the following commands:
+After installing ciao, you can set up the remainder of the superchandra environment with the following commands:
 
 ```
 alias ciao='source $CIAO_DIR/ciao-4.11/bin/ciao.bash'
