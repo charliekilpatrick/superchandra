@@ -79,6 +79,19 @@ bh = {
         }}]
 }
 
+frb = {
+    # Power law with Gamma=2
+    'type': 'frb',
+    'models': [
+        {'name': 'frb',
+        'gamma': 2.0,
+        'weights': {
+            'emin': 2.0,
+            'emax': 10.0,
+            'ewidth': 0.02,
+        }}]
+}
+
 # Color strings for download messages
 green = '\033[1;32;40m'
 red = '\033[1;31;40m'
@@ -160,10 +173,12 @@ class chandra():
 
         # Dictionary with data output from post-processing analysis
         # Names for output photometry table
-        names = ['temperature', 'flux', 'flux_limit', 's_to_n', 'total',
-            'background', 'energy', 'bccorr', 'exposure']
-        self.final_phot = Table([[0.],[0.],[0.],[0.],[0.],[0.],[0.],[0.],[0.]],
-            names=names)[:0].copy()
+        self.names = ['temperature', 'flux','fluxerr', 'flux_limit', 's_to_n', 'total',
+            'background', 'energy', 'bccorr', 'exposure', 
+            'count_limit_poisson', 'flux_limit_poisson']
+        self.final_phot = Table([[0.],[0.],[0.],[0.],[0.],[0.],[0.],[0.],[0.],[0.],
+            [0.],[0.]],
+            names=self.names)[:0].copy()
 
         self.evt2files = []
         self.bpixfiles = []
@@ -207,6 +222,8 @@ class chandra():
             help='Model spectrum to use (options are sss|bh).')
         parser.add_argument('--search_radius','-s', default=0.1667, type=float,
             help='Override search radius with input value (units are degrees).')
+        parser.add_argument('--radius','-r', default=None, type=float,
+            help='Radius (in arcsec) for performing aperture photometry.')
         return(parser)
 
     def set_spectrum(self, spectrum_type):
@@ -215,6 +232,12 @@ class chandra():
             self.options['spectrum']=sss
         elif spectrum_type=='bh':
             self.options['spectrum']=bh
+        elif spectrum_type=='frb':
+            self.options['spectrum']=frb
+            self.names[0]='gamma'
+            self.final_phot = Table([[0.],[0.],[0.],[0.],[0.],[0.],[0.],[0.],[0.],
+                [0.],[0.],[0.]],
+                names=self.names)[:0].copy()
 
     def get_obstable(self, coord, radius, obsid=True):
         url = self.options['global']['uri']
@@ -591,7 +614,6 @@ class chandra():
 
         # Get photometry value and rescale to per pixel
         phot = phot_table['aperture_sum'][0]
-        print(phot)
         phot_per_pixel = phot * (pixscale * 3600.0)**2 / (np.pi * radius**2)
 
         return(phot_per_pixel)
@@ -632,6 +654,8 @@ class chandra():
 
             bccorr = in_band / bolometric
             return(bccorr)
+        else:
+            return(1.0)
 
 if __name__ == '__main__':
     # Start timer, create hst123 class obj, parse args
@@ -678,6 +702,9 @@ if __name__ == '__main__':
 
     if options.search_radius:
         chandra.options['global']['radius']=options.search_radius
+
+    if options.radius:
+        chandra.options['global']['phot_radius'] = options.radius
 
     # Starting banner
     message = 'Starting superchandra.py'
@@ -818,10 +845,15 @@ if __name__ == '__main__':
 
         # 7) Determine limiting 3-sigma flux using Gehrels 1986 eq. 9
         lam = (total + 1) * (1 - 1/(9*(total+1)) + 3.0/(3*np.sqrt(total+1)))**3
-        lam_flux = (lam - background) * energy / exposure / bccorr * 1.60218e-9
 
-        chandra.final_phot.add_row((spectrum, flux, lam_flux, sn, total,
-            background, energy, bccorr, exposure))
+        # 8) Estimate background flux assuming Poisson statistics for total+background
+        lam_bkg = 3.0 * np.sqrt(total+background)
+
+        lam_flux = (lam - background) * energy / exposure / bccorr * 1.60218e-9
+        lam_flux_bkg = lam_bkg * energy / exposure / bccorr * 1.60218e-9
+
+        chandra.final_phot.add_row((spectrum, flux, flux/sn, lam_flux, sn, total,
+            background, energy, bccorr, exposure, lam_bkg, lam_flux_bkg))
 
     message = 'Printing final output photometry to table={table}'
     chandra.make_banner(message.format(table=chandra.outtable))
