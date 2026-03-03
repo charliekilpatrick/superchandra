@@ -1,0 +1,6 @@
+#!/Users/ckilpatrick/Library/CloudStorage/Dropbox/scripts/python/cursor/superchandra/.venv312/bin/python
+import sys
+from astropy.io.fits.scripts.fitscheck import main
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    sys.exit(main())
