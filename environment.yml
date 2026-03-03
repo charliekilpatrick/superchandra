@@ -1,0 +1,11 @@
+# Basic conda environment for superchandra (use before pip install -e .).
+# Install: conda env create -f environment.yml
+# Activate: conda activate superchandra
+# Then: pip install -e ".[test]"
+name: superchandra
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
