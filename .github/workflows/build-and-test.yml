@@ -42,19 +42,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Miniconda
+      - name: Set up Miniconda and create CIAO env
         uses: conda-incubator/setup-miniconda@v3
         with:
-          miniforge-variant: Mambaforge
+          miniforge-variant: Miniforge3
           use-mamba: true
-          channels: conda-forge,https://cxc.cfa.harvard.edu/conda/ciao
+          channels: https://cxc.cfa.harvard.edu/conda/ciao,conda-forge
           channel-priority: strict
-          python-version: "3.12"
+          environment-file: environment-ciao.yml
+          activate-environment: test
 
-      - name: Install CIAO (latest from CXC channel)
+      - name: Verify CIAO
         shell: bash -l {0}
         run: |
-          conda install -y -c https://cxc.cfa.harvard.edu/conda/ciao -c conda-forge ciao
           which make_instmap_weights || true
           make_instmap_weights --help || true
 
