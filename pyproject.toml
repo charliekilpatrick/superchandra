@@ -7,7 +7,7 @@ name = "superchandra"
 dynamic = ["version"]
 description = "Download and analyze Chandra/ACIS data for a position: obs lookup, merge_obs, aperture photometry, flux and upper limits."
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
 requires-python = ">=3.12,<3.13"
 authors = [
     { name = "C. D. Kilpatrick" }

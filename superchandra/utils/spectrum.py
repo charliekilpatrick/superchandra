@@ -63,12 +63,14 @@ def get_bolometric_correction(model, spectype='blackbody'):
     idx1 = (np.abs(wavelengths - (conversion / model['weights']['emax']))).argmin()
     idx2 = (np.abs(wavelengths - (conversion / model['weights']['emin']))).argmin()
     in_band_wave = wavelengths[idx1:idx2]
-    in_band = integrate_trapezoid(
-        in_band_wave,
-        in_band_wave ** (-5) / (np.exp(conversion / (in_band_wave * temperature)) - 1)
-    )
-    bolometric = integrate_trapezoid(
-        wavelengths,
-        wavelengths ** (-5) / (np.exp(conversion / (wavelengths * temperature)) - 1)
-    )
+    # Suppress overflow in exp() for small wavelength*temperature; result is finite.
+    with np.errstate(over='ignore', invalid='ignore'):
+        planck_in_band = in_band_wave ** (-5) / (
+            np.exp(conversion / (in_band_wave * temperature)) - 1
+        )
+        planck_full = wavelengths ** (-5) / (
+            np.exp(conversion / (wavelengths * temperature)) - 1
+        )
+    in_band = integrate_trapezoid(in_band_wave, planck_in_band)
+    bolometric = integrate_trapezoid(wavelengths, planck_full)
     return in_band / bolometric
