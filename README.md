@@ -1,6 +1,6 @@
 # superchandra
 
-[![Build and test](https://github.com/ckilpatrick/superchandra/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/ckilpatrick/superchandra/actions/workflows/build-and-test.yml)
+[![Build and test](https://github.com/charliekilpatrick/superchandra/actions/workflows/build-and-test.yml/badge.svg?branch=master)](https://github.com/charliekilpatrick/superchandra/actions/workflows/build-and-test.yml)
 
 Download and analyze Chandra/ACIS data for a given sky position: observation lookup, data download (evt2, asol, bpix, mask), merging with CIAO, and aperture photometry with configurable spectral models (e.g. blackbody, power law) for flux and upper limits.
 
