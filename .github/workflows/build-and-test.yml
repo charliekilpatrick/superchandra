@@ -45,7 +45,7 @@ jobs:
       - name: Set up Miniconda
         uses: conda-incubator/setup-miniconda@v3
         with:
-          miniforge-variant: Mambaforge
+          miniforge-variant: Miniforge3
           use-mamba: true
           channels: conda-forge,https://cxc.cfa.harvard.edu/conda/ciao
           channel-priority: strict
