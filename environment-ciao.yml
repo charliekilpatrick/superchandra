@@ -1,7 +1,7 @@
 # Conda environment for CI: CIAO (CXC channel first) + Python 3.12.
 # Used by .github/workflows/build-and-test.yml job "Test with CIAO (latest)".
 # See: https://cxc.cfa.harvard.edu/ciao/threads/ciao_install_conda/
-name: test
+name: ciao
 channels:
   - https://cxc.cfa.harvard.edu/conda/ciao
   - conda-forge

@@ -50,7 +50,7 @@ jobs:
           channels: https://cxc.cfa.harvard.edu/conda/ciao,conda-forge
           channel-priority: strict
           environment-file: environment-ciao.yml
-          activate-environment: test
+          activate-environment: ciao
 
       - name: Verify CIAO
         shell: bash -l {0}

@@ -23,24 +23,25 @@ If you use this code in your research, please cite:
 
 **Requirements:** [Conda](https://docs.conda.io/en/latest/) (Miniconda or Anaconda) and Python 3.12.
 
-1. Clone or download this repository and go to the project root (the directory containing `pyproject.toml` and `environment.yml`).
+1. Clone or download this repository and go to the project root (the directory containing `pyproject.toml`).
 
-2. Create and activate the conda environment from `environment.yml`:
+2. Choose one installation path:
+
+   **Option A (recommended for full functionality, with CIAO):**
+
+   ```bash
+   conda env create -f environment-ciao.yml
+   conda activate ciao
+   pip install -e .
+   superchandra --help
+   ```
+
+   **Option B (core Python workflow, no CIAO in env):**
 
    ```bash
    conda env create -f environment.yml
    conda activate superchandra
-   ```
-
-3. Install the package in editable mode (dependencies are installed from `pyproject.toml`):
-
-   ```bash
    pip install -e .
-   ```
-
-4. Verify the CLI is available:
-
-   ```bash
    superchandra --help
    ```
 
