@@ -6,13 +6,13 @@ This document records how `pyproject.toml` dependencies align with the installab
 
 | Dependency         | Version (pyproject) | Used by |
 |--------------------|---------------------|---------|
-| numpy              | >=1.22              | superchandra.py, utils/math.py, utils/spectrum.py |
-| astropy            | >=5.3               | superchandra.py (votable, coordinates, table, time, fits, wcs), utils/coord.py, tests (conftest, test_utils) |
-| requests           | >=2.28              | superchandra.py (get_obstable), utils/extinction.py (get_MW_Av) |
-| xmltodict          | >=0.12              | superchandra.py (VO table parse), utils/extinction.py (IRSA DUST) |
-| photutils          | >=1.0               | superchandra.py (SkyCircularAperture, SkyCircularAnnulus, aperture_photometry) |
-| python-dateutil    | >=2.8                | superchandra.py (dateparse for --before, --after) |
-| pytest             | >=7.0 (optional [test]) | All tests |
+| numpy              | >=2.4               | superchandra.py, utils/math.py, utils/spectrum.py |
+| astropy            | >=7.2               | superchandra.py (votable, coordinates, table, time, fits, wcs), utils/coord.py, tests (conftest, test_utils) |
+| requests           | >=2.33              | superchandra.py (get_obstable), utils/extinction.py (get_MW_Av) |
+| xmltodict          | >=1.0               | superchandra.py (VO table parse), utils/extinction.py (IRSA DUST) |
+| photutils          | >=2.3               | superchandra.py (SkyCircularAperture, SkyCircularAnnulus, aperture_photometry) |
+| python-dateutil    | >=2.9               | superchandra.py (dateparse for --before, --after) |
+| pytest             | >=9.0 (optional [test]) | All tests |
 
 Stdlib-only imports (not in pyproject): `os`, `sys`, `shutil`, `glob`, `tempfile`, `warnings`, `argparse`, `subprocess`, `tempfile`.
 
@@ -29,4 +29,4 @@ Stdlib-only imports (not in pyproject): `os`, `sys`, `shutil`, `glob`, `tempfile
 
 ## Version bounds (current)
 
-Lower bounds are conservative and compatible with current photutils and astropy. No upper bounds are set in pyproject; when installing into a CIAO conda env, pin numpy in that env as documented in the README.
+Minimum versions in `pyproject.toml` are set to the currently validated dependency stack used by the package install/build/test workflow. No upper bounds are set in pyproject; when installing into a CIAO conda env, pin numpy in that env as documented in the README.
